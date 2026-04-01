@@ -34,6 +34,8 @@ python-dotenv==1.0.0
 # Utilities
 opencv-contrib-python==4.8.1.78  # Extended OpenCV modules
 
+httpx==0.27.2
+
 # Optional Performance Optimizations
 # Uncomment if needed:
 # onnxruntime-gpu==1.16.3  # For ONNX model acceleration

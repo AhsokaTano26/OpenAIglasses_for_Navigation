@@ -16,9 +16,9 @@ struct WavFmt;
 using namespace websockets;
 
 // ===== WiFi / Server =====
-const char* WIFI_SSID   = "aiglass";
-const char* WIFI_PASS   = "xu137227";
-const char* SERVER_HOST = "47.100.161.139";
+const char* WIFI_SSID   = "342";
+const char* WIFI_PASS   = "88888888";
+const char* SERVER_HOST = "192.168.1.154";
 const uint16_t SERVER_PORT = 8081;
 
 static const char* CAM_WS_PATH = "/ws/camera";
@@ -56,11 +56,11 @@ const int TTS_RATE = 16000;
 
 // ===== IMU (ICM42688 over SPI) / UDP =====
 // 使用 D0~D3 作为 SPI
-#define IMU_SPI_SCK   1   // D0
-#define IMU_SPI_MOSI  2   // D1
-#define IMU_SPI_MISO  3   // D2
-#define IMU_SPI_CS    4   // D3
-const char* UDP_HOST  = "47.100.161.139";
+#define IMU_SPI_SCK   1   // D0 SCL/SCLK
+#define IMU_SPI_MOSI  2   // D1 SDA/MOSI
+#define IMU_SPI_MISO  3   // D2 ADO/MISO
+#define IMU_SPI_CS    4   // D3 CS
+const char* UDP_HOST  = "192.168.1.154";
 const int   UDP_PORT  = 12345;
 
 WiFiUDP udp;
@@ -865,6 +865,11 @@ void taskImuLoop(void*){
 void setup() {
   Serial.begin(115200);
   delay(300);
+  if (imu_init_spi()) {
+    Serial.println("[IMU] SPI Init OK, ID=0x47");
+  } else {
+    Serial.println("[IMU] Init FATAL ERROR"); 
+  }
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
