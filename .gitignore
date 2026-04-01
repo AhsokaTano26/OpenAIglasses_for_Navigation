@@ -1,0 +1,114 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Project-specific
+# 录制文件（本地生成，不应提交）
+recordings/
+*.avi
+*.mp4
+*.mov
+*.mkv
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+*.pid
+
+# 系统文件
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# 模型缓存（可选，取决于是否需要版本控制）
+# model/yolo*.pt
+# model/*.pt
+
+# 音频缓存
+*.wav.cache
+*.mp3.cache
+
+# 用户配置
+config.local.json
+config.user.json
+
+# 编译产物
+compile/build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Uvicorn/FastAPI logs
+*.log
+access.log
+
+# 其他临时文件
+.cache/
+tmp/
+temp/
+
+# macOS特定
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+

@@ -11,12 +11,37 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# --- GPU/CPU & AMP 配置 (从 blindpath 工作流迁移而来，保持一致) ---
-DEVICE = os.getenv("AIGLASS_DEVICE", "cuda:0")
-if DEVICE.startswith("cuda") and not torch.cuda.is_available():
-    logger.warning(f"AIGLASS_DEVICE={DEVICE} 但未检测到 CUDA，将回退到 CPU")
-    DEVICE = "cpu"
+# --- 智能设备配置 (兼容 CUDA 和 CPU，不支持 MPS) ---
+# 1. 尝试从环境变量获取，如果没有则设为 None
+requested_device = os.getenv("AIGLASS_DEVICE")
+
+if requested_device:
+    DEVICE = requested_device
+    # 验证请求的设备是否可用
+    if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+        logger.warning(f"请求了 CUDA 但不可用，准备切换...")
+        DEVICE = None
+    elif DEVICE == "mps":
+        # MPS 不兼容 TorchScript（mobileclip_blt.ts），强制使用 CPU
+        logger.warning(f"MPS 设备不兼容 TorchScript，强制切换到 CPU")
+        DEVICE = "cpu"
+else:
+    DEVICE = None
+
+# 2. 自动探测最佳可用设备（排除 MPS，因为不兼容 TorchScript）
+if DEVICE is None:
+    if torch.cuda.is_available():
+        DEVICE = "cuda:0"
+    else:
+        # MPS 和 CPU 的选择：优先选 CPU，避免 TorchScript 兼容性问题
+        DEVICE = "cpu"
+        logger.info("使用 CPU 运行（MPS 不兼容 TorchScript）")
+
+# 3. 状态标记
 IS_CUDA = DEVICE.startswith("cuda")
+IS_MPS = DEVICE == "mps"  # 实际上永不为 True
+
+print(f"最终运行设备设定为: {DEVICE}")
 
 AMP_POLICY = os.getenv("AIGLASS_AMP", "bf16").lower()
 if AMP_POLICY not in ("bf16", "fp16", "off"):

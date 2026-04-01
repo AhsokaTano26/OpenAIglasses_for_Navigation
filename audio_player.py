@@ -63,7 +63,7 @@ _initialized = False
 _last_play_ts = 0.0  # 记录上次播放结束时间，用于决定预热静音长度
 
 def load_wav_file(filepath):
-    """加载WAV文件并返回PCM数据（自动转换为8kHz）"""
+    """加载WAV文件并返回PCM数据（自动转换为8kHz，自动转换为单声道）"""
     if filepath in _audio_cache:
         return _audio_cache[filepath]
     
@@ -84,18 +84,19 @@ def load_wav_file(filepath):
             framerate = wav.getframerate()
             
             if channels != 1:
-                print(f"[AUDIO] 警告: {filepath} 不是单声道，将只使用第一个声道")
+                print(f"[AUDIO] 警告: {filepath} 不是单声道，将自动转换为单声道")
             if sampwidth != 2:
                 print(f"[AUDIO] 警告: {filepath} 不是16位音频")
             
             # 读取所有帧
             frames = wav.readframes(wav.getnframes())
             
-            # 如果是立体声，只取左声道
-            if channels == 2:
+            # 如果是立体声或多声道，转换为单声道（只取左声道）
+            if channels != 1:
                 import audioop
                 frames = audioop.tomono(frames, sampwidth, 1, 0)
-            
+                print(f"[AUDIO] 已转换: {filepath} {channels}声道 -> 单声道")
+
             # 统一转换为8kHz（使用ratecv保证音调和速度不变）
             if framerate != 8000:
                 import audioop

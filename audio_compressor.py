@@ -332,7 +332,7 @@ class CompressedAudioCache:
                 framerate = wav.getframerate()
                 
                 if channels != 1:
-                    logger.warning(f"{filepath} 不是单声道")
+                    logger.warning(f"{filepath} 不是单声道，将自动转换为单声道")
                 if sampwidth != 2:
                     logger.warning(f"{filepath} 不是16位音频")
                 

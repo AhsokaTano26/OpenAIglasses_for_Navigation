@@ -1,10 +1,11 @@
 # app_main.py
 # -*- coding: utf-8 -*-
-import os, sys, time, json, asyncio, base64, audioop
+import os, sys, time, json, asyncio, base64
 from typing import Any, Dict, Optional, Tuple, List, Callable, Set, Deque
 from collections import deque
 from dataclasses import dataclass
 import re
+from contextlib import asynccontextmanager
 # 在其它 import 之后加：
 from qwen_extractor import extract_english_label
 from navigation_master import NavigationMaster, OrchestratorResult 
@@ -30,6 +31,7 @@ import mediapipe as mp
 import bridge_io
 import threading
 import yolomedia  # 确保和 app_main.py 同目录，文件名就是 yolomedia.py
+import scipy.signal
 # ---- Windows 事件循环策略 ----
 if sys.platform.startswith("win"):
     try:
@@ -84,7 +86,20 @@ import atexit
 UDP_IP   = "0.0.0.0"
 UDP_PORT = 12345
 
+# 【新增】app 初始化
 app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await on_startup_register_bridge_sender()
+    await on_startup_init_audio()
+    await on_startup()
+    yield
+    # Shutdown
+    await on_shutdown()
+
+app = FastAPI(lifespan=lifespan)
 
 # ====== 状态与容器 ======
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -121,28 +136,20 @@ def load_navigation_models():
     global yolo_seg_model, obstacle_detector
 
     try:
-        seg_model_path = os.getenv("BLIND_PATH_MODEL", r"C:\Users\Administrator\Desktop\rebuild1002\model\yolo-seg.pt")
-        #print(f"[NAVIGATION] 尝试加载模型: {seg_model_path}")
-
+        seg_model_path = os.getenv("BLIND_PATH_MODEL", "model/yolo-seg.pt")
         if os.path.exists(seg_model_path):
             print(f"[NAVIGATION] 模型文件存在，开始加载...")
             yolo_seg_model = YOLO(seg_model_path)
 
-            # 强制放到 GPU
-            if torch.cuda.is_available():
-                yolo_seg_model.to("cuda")
-                print(f"[NAVIGATION] 盲道分割模型加载成功并放到GPU: {yolo_seg_model.device}")
-            else:
-                print("[NAVIGATION] CUDA不可用，模型仍在CPU")
+            # 强制模型在CPU上加载
+            device = "cpu"
+            yolo_seg_model.to(device)
+            print(f"[NAVIGATION] 盲道分割模型已成功加载到 {device.upper()}：{yolo_seg_model.device}")
 
-            # 测试模型是否能正常运行
+            # 测试模型功能
             try:
                 test_img = np.zeros((640, 640, 3), dtype=np.uint8)
-                results = yolo_seg_model.predict(
-                    test_img,
-                    device="cuda" if torch.cuda.is_available() else "cpu",
-                    verbose=False
-                )
+                results = yolo_seg_model.predict(test_img, device=device, verbose=False)
                 print(f"[NAVIGATION] 模型测试成功，支持的类别数: {len(yolo_seg_model.names) if hasattr(yolo_seg_model, 'names') else '未知'}")
                 if hasattr(yolo_seg_model, 'names'):
                     print(f"[NAVIGATION] 模型类别: {yolo_seg_model.names}")
@@ -150,53 +157,37 @@ def load_navigation_models():
                 print(f"[NAVIGATION] 模型测试失败: {e}")
         else:
             print(f"[NAVIGATION] 错误：找不到模型文件: {seg_model_path}")
-            print(f"[NAVIGATION] 当前工作目录: {os.getcwd()}")
-            print(f"[NAVIGATION] 请检查文件路径是否正确")
-            
-        # 【修改开始】使用 ObstacleDetectorClient 替代直接的 YOLO
-        obstacle_model_path = os.getenv("OBSTACLE_MODEL", r"C:\Users\Administrator\Desktop\rebuild1002\model\yoloe-11l-seg.pt")
+
+        # 加载障碍物检测模型
+        obstacle_model_path = os.getenv("OBSTACLE_MODEL", "model/yoloe-11l-seg.pt")
         print(f"[NAVIGATION] 尝试加载障碍物检测模型: {obstacle_model_path}")
-        
+
         if os.path.exists(obstacle_model_path):
             print(f"[NAVIGATION] 障碍物检测模型文件存在，开始加载...")
             try:
-                # 使用 ObstacleDetectorClient 封装的 YOLO-E
+                # 强制使用 CPU 加载 obstacle detector，避免 MPS 兼容性问题
+                os.environ["AIGLASS_DEVICE"] = "cpu"
                 obstacle_detector = ObstacleDetectorClient(model_path=obstacle_model_path)
                 print(f"[NAVIGATION] ========== YOLO-E 障碍物检测器加载成功 ==========")
-                
-                # 检查模型是否成功加载
+
+                # 确保障碍物检测器使用 CPU
                 if hasattr(obstacle_detector, 'model') and obstacle_detector.model is not None:
-                    print(f"[NAVIGATION] YOLO-E 模型已初始化")
-                    print(f"[NAVIGATION] 模型设备: {next(obstacle_detector.model.parameters()).device}")
+                    obstacle_detector.model.to("cpu")
+                    print(f"[NAVIGATION] YOLO-E 模型已在 CPU 上初始化")
                 else:
                     print(f"[NAVIGATION] 警告：YOLO-E 模型初始化异常")
-                
-                # 检查白名单是否成功加载
-                if hasattr(obstacle_detector, 'WHITELIST_CLASSES'):
-                    print(f"[NAVIGATION] 白名单类别数: {len(obstacle_detector.WHITELIST_CLASSES)}")
-                    print(f"[NAVIGATION] 白名单前10个类别: {', '.join(obstacle_detector.WHITELIST_CLASSES[:10])}")
-                else:
-                    print(f"[NAVIGATION] 警告：白名单类别未定义")
-                
-                # 检查文本特征是否成功预计算
-                if hasattr(obstacle_detector, 'whitelist_embeddings') and obstacle_detector.whitelist_embeddings is not None:
-                    print(f"[NAVIGATION] YOLO-E 文本特征已预计算")
-                    print(f"[NAVIGATION] 文本特征张量形状: {obstacle_detector.whitelist_embeddings.shape if hasattr(obstacle_detector.whitelist_embeddings, 'shape') else '未知'}")
-                else:
-                    print(f"[NAVIGATION] 警告：YOLO-E 文本特征未预计算")
-                
-                # 测试障碍物检测功能
+
+
+                # 测试障碍物检测
                 print(f"[NAVIGATION] 开始测试 YOLO-E 检测功能...")
                 try:
                     test_img = np.zeros((640, 640, 3), dtype=np.uint8)
-                    # 在测试图像中画一个白色矩形，模拟一个物体
                     cv2.rectangle(test_img, (200, 200), (400, 400), (255, 255, 255), -1)
-                    
-                    # 测试检测（不提供 path_mask）
+
                     test_results = obstacle_detector.detect(test_img)
                     print(f"[NAVIGATION] YOLO-E 检测测试成功!")
                     print(f"[NAVIGATION] 测试检测结果数: {len(test_results)}")
-                    
+
                     if len(test_results) > 0:
                         print(f"[NAVIGATION] 测试检测到的物体:")
                         for i, obj in enumerate(test_results):
@@ -205,19 +196,12 @@ def load_navigation_models():
                                   f"位置: ({obj.get('center_x', 0):.0f}, {obj.get('center_y', 0):.0f})")
                 except Exception as e:
                     print(f"[NAVIGATION] YOLO-E 检测测试失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-                
-                print(f"[NAVIGATION] ========== YOLO-E 障碍物检测器加载完成 ==========")
-                
             except Exception as e:
                 print(f"[NAVIGATION] 障碍物检测器加载失败: {e}")
-                import traceback
-                traceback.print_exc()
                 obstacle_detector = None
         else:
             print(f"[NAVIGATION] 警告：找不到障碍物检测模型文件: {obstacle_model_path}")
-        
+
     except Exception as e:
         print(f"[NAVIGATION] 模型加载失败: {e}")
         import traceback
@@ -645,9 +629,11 @@ async def start_ai_with_text(user_text: str):
                     except Exception:
                         pcm24 = b""
                     if pcm24:
-                        # 24k → 8k (使用ratecv保证音调和速度不变)
-                        pcm8k, rate_state = audioop.ratecv(pcm24, 2, 1, 24000, 8000, rate_state)
-                        pcm8k = audioop.mul(pcm8k, 2, 0.60)
+                        # 24k → 8k (使用scipy.signal.resample)
+                        pcm24_array = np.frombuffer(pcm24, dtype=np.int16)
+                        pcm8k_array = scipy.signal.resample(pcm24_array, int(len(pcm24_array) * 8000 / 24000))
+                        pcm8k_array = pcm8k_array * 0.60
+                        pcm8k = pcm8k_array.astype(np.int16).tobytes()
                         if pcm8k:
                             await broadcast_pcm16_realtime(pcm8k)
 
@@ -1228,7 +1214,6 @@ class UDPProto(asyncio.DatagramProtocol):
 
 
 # === 新增：注册给 bridge_io 的发送回调（把 JPEG 广播给 /ws/viewer） ===
-@app.on_event("startup")
 async def on_startup_register_bridge_sender():
     # 保存主线程的事件循环
     main_loop = asyncio.get_event_loop()
@@ -1271,7 +1256,6 @@ async def on_startup_register_bridge_sender():
 
     bridge_io.set_sender(_sender)
 
-@app.on_event("startup")
 async def on_startup_init_audio():
     """启动时初始化音频系统"""
     # 在后台线程中初始化，避免阻塞启动
@@ -1283,12 +1267,10 @@ async def on_startup_init_audio():
     
     threading.Thread(target=_init, daemon=True).start()
 
-@app.on_event("startup")
 async def on_startup():
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(lambda: UDPProto(), local_addr=(UDP_IP, UDP_PORT))
 
-@app.on_event("shutdown")
 async def on_shutdown():
     """应用关闭时的清理工作"""
     print("[SHUTDOWN] 开始清理资源...")
@@ -1300,8 +1282,6 @@ async def on_shutdown():
     await hard_reset_audio("shutdown")
     
     print("[SHUTDOWN] 资源清理完成")
-
-# app_main.py —— 在文件里已有的 @app.on_event("startup") 之后，再加一个新的 startup 钩子
 
 
 # --- 导出接口（可选） ---
